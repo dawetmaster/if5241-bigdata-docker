@@ -8,11 +8,13 @@ services:
     hostname: namenode
     command: ["hdfs", "namenode"]
     ports:
-      - "9870:9870"
+      - "9870:9870"  # Web UI
+      - "9000:9000"  # HDFS IPC — wajib untuk client (hdfs dfs, Spark, dsb)
     environment:
       CLUSTER_NAME: local-cluster
     volumes:
       - hadoop_namenode:/tmp/hadoop-root
+      - ./hadoop:/home/hadoop  # direktori lokal host → dalam container
 
   datanode:
     image: openeuler/hadoop:latest

@@ -1,0 +1,20 @@
+# requirements.jupyter.txt
+#
+# Dependencies untuk Jupyter image berbasis apache/spark.
+# Update versi di sini, lalu rebuild: docker compose build jupyter
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+jupyterlab==4.3.6
+notebook==7.3.3
+ipykernel==6.29.5
+ipywidgets==8.1.5
+
+# ── Kafka ─────────────────────────────────────────────────────────────────────
+kafka-python==2.0.6
+
+# ── Data science utilities (opsional, hapus yang tidak dipakai) ───────────────
+pandas==2.2.3
+numpy==2.2.3
+matplotlib==3.10.1
+
+pyspark==3.5.1
