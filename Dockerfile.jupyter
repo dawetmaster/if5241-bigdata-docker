@@ -1,0 +1,41 @@
+# Dockerfile.jupyter
+#
+# Base: WAJIB identik dengan spark-master dan spark-worker di docker-compose.yml
+# agar serialVersionUID Spark class tidak clash (InvalidClassException).
+#
+# Kalau upgrade Spark di docker-compose, update ARG SPARK_IMAGE di sini juga.
+
+ARG SPARK_IMAGE=apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
+FROM ${SPARK_IMAGE}
+
+USER root
+
+# ── System dependencies ───────────────────────────────────────────────────────
+# Diinstall sekali saat build, tidak perlu ulang tiap container start
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python dependencies ───────────────────────────────────────────────────────
+# Pin versi eksplisit agar build reproducible
+COPY requirements.jupyter.txt /tmp/requirements.jupyter.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.jupyter.txt
+
+# ── Jupyter config ─────────────────────────────────────────────────────────────
+# Buat config file agar tidak perlu flag panjang di command
+RUN jupyter lab --generate-config && \
+    echo "c.ServerApp.ip = '0.0.0.0'" >> /root/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.port = 8888" >> /root/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.open_browser = False" >> /root/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.allow_root = True" >> /root/.jupyter/jupyter_lab_config.py && \
+    echo "c.IdentityProvider.token = ''" >> /root/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.notebook_dir = '/home/notebooks'" >> /root/.jupyter/jupyter_lab_config.py
+
+# ── Working directory ─────────────────────────────────────────────────────────
+WORKDIR /home/notebooks
+
+EXPOSE 8888
+
+CMD ["jupyter", "lab"]

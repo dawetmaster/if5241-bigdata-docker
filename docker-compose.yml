@@ -1,0 +1,109 @@
+# version: "3.8"
+
+services:
+
+  # === HDFS ===
+  namenode:
+    image: openeuler/hadoop:latest
+    hostname: namenode
+    command: ["hdfs", "namenode"]
+    ports:
+      - "9870:9870"
+    environment:
+      CLUSTER_NAME: local-cluster
+    volumes:
+      - hadoop_namenode:/tmp/hadoop-root
+
+  datanode:
+    image: openeuler/hadoop:latest
+    command: ["hdfs", "datanode"]
+    depends_on: [namenode]
+    volumes:
+      - hadoop_datanode:/tmp/hadoop-root
+
+  # === KAFKA (KRaft, no ZooKeeper) ===
+  kafka:
+    image: apache/kafka:4.1.1
+    hostname: kafka
+    ports:
+      - "9092:9092"    # EXTERNAL — dari host
+      - "29092:29092"  # INTERNAL — antar container
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on: [kafka]
+
+  # === SPARK ===
+  spark-master:
+    image: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
+    user: root
+    command: ["/opt/spark/sbin/start-master.sh"]
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+
+  spark-worker:
+    image: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
+    user: root
+    command: ["/opt/spark/sbin/start-worker.sh", "spark://spark-master:7077"]
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    depends_on: [spark-master]
+
+  # === JUPYTER ===
+  # Build dari Dockerfile.jupyter — dependencies di-install saat build, bukan saat start.
+  # Base image di Dockerfile.jupyter WAJIB identik dengan spark-master/spark-worker
+  # agar serialVersionUID Spark tidak clash (InvalidClassException).
+  #
+  # Cara rebuild setelah update requirements.jupyter.txt:
+  #   docker compose build jupyter
+  #   docker compose up -d jupyter
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.jupyter
+      args:
+        SPARK_IMAGE: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
+    image: local/jupyter-spark:3.5.1   # tag lokal agar tidak confuse dengan image upstream
+    user: root
+    ports:
+      - "8888:8888"
+    environment:
+      SPARK_MASTER: spark://spark-master:7077
+    volumes:
+      - ./notebooks:/home/notebooks
+    depends_on: [spark-master]
+
+
+  # === NEO4J ===
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/IF5241-bigdata
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  hadoop_namenode:
+  hadoop_datanode:
+  neo4j_data:
