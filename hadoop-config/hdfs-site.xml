@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  hdfs-site.xml
+  Konfigurasi HDFS: replikasi, direktori data namenode dan datanode.
+  dfs.replication=1 karena hanya ada 1 datanode (setup eksperimen).
+-->
+<configuration>
+  <property>
+    <n>dfs.replication</n>
+    <value>1</value>
+    <description>Jumlah replika blok. Sesuaikan dengan jumlah datanode.</description>
+  </property>
+  <property>
+    <n>dfs.namenode.name.dir</n>
+    <value>/tmp/hadoop-data/namenode</value>
+    <description>Direktori penyimpanan metadata NameNode (fsimage, edits).</description>
+  </property>
+  <property>
+    <n>dfs.datanode.data.dir</n>
+    <value>/tmp/hadoop-data/datanode</value>
+    <description>Direktori penyimpanan blok data di DataNode.</description>
+  </property>
+  <property>
+    <n>dfs.namenode.datanode.registration.ip-hostname-check</n>
+    <value>false</value>
+    <description>Nonaktifkan IP-hostname check agar DataNode bisa register dari container lain.</description>
+  </property>
+  <property>
+    <n>dfs.permissions.enabled</n>
+    <value>false</value>
+    <description>Nonaktifkan permission check untuk kemudahan eksperimen.</description>
+  </property>
+</configuration>

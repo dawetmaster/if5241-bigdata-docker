@@ -53,6 +53,7 @@ echo -e "${ARROW} Membuat direktori..."
 
 DIRS=(
     "hadoop"           # bind mount namenode & datanode — staging area HDFS
+    "hadoop-config"    # config XML Hadoop & Hive yang di-mount ke container
     "notebooks"        # bind mount Jupyter — tempat menyimpan .ipynb
 )
 
@@ -88,6 +89,11 @@ REQUIRED_FILES=(
     "docker-compose.yml"
     "Dockerfile.jupyter"
     "requirements.jupyter.txt"
+    "hadoop-config/core-site.xml"
+    "hadoop-config/hdfs-site.xml"
+    "hadoop-config/hive-site.xml"
+    "hdfs-init.sh"
+    "hive-init.sh"
 )
 
 ALL_OK=true
@@ -123,14 +129,21 @@ echo ""
 echo -e "  2. Jalankan stack:"
 echo -e "     ${CYAN}docker compose up -d${NC}"
 echo ""
-echo -e "  3. Akses UI:"
-echo -e "     JupyterLab  → ${CYAN}http://localhost:8888${NC}"
-echo -e "     Spark UI    → ${CYAN}http://localhost:8081${NC}"
-echo -e "     Kafka UI    → ${CYAN}http://localhost:8080${NC}"
-echo -e "     HDFS UI     → ${CYAN}http://localhost:9870${NC}"
-echo -e "     Neo4j       → ${CYAN}http://localhost:7474${NC}"
+echo -e "  3. Inisialisasi HDFS (hanya sekali, setelah namenode up):"
+echo -e "     ${CYAN}chmod +x hdfs-init.sh && ./hdfs-init.sh${NC}"
 echo ""
-echo -e "  4. Upload file ke HDFS:"
+echo -e "  4. Inisialisasi Hive (hanya sekali, setelah hdfs-init selesai):"
+echo -e "     ${CYAN}chmod +x hive-init.sh && ./hive-init.sh${NC}"
+echo ""
+echo -e "  5. Akses UI:"
+echo -e "     JupyterLab   → ${CYAN}http://localhost:8888${NC}"
+echo -e "     Spark UI     → ${CYAN}http://localhost:8081${NC}"
+echo -e "     Kafka UI     → ${CYAN}http://localhost:8080${NC}"
+echo -e "     HDFS UI      → ${CYAN}http://localhost:9870${NC}"
+echo -e "     Neo4j        → ${CYAN}http://localhost:7474${NC}"
+echo -e "     HiveServer2  → ${CYAN}http://localhost:10002${NC}"
+echo ""
+echo -e "  6. Upload file ke HDFS:"
 echo -e "     Salin file ke ${CYAN}./hadoop/${NC}, lalu dari dalam container:"
 echo -e "     ${CYAN}docker compose exec namenode hdfs dfs -put /home/hadoop/<file> /user/data/${NC}"
 echo ""

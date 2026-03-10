@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  hive-site.xml
+  Konfigurasi Hive Metastore dan HiveServer2.
+  Di-mount ke container hive-metastore dan hive-server2.
+-->
+<configuration>
+
+  <!-- ── Metastore URI ─────────────────────────────────────────────────── -->
+  <property>
+    <name>hive.metastore.uris</name>
+    <value>thrift://hive-metastore:9083</value>
+    <description>Alamat Hive Metastore Thrift server. Dipakai oleh HiveServer2 dan Spark.</description>
+  </property>
+
+  <!-- ── PostgreSQL sebagai metastore database ─────────────────────────── -->
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:postgresql://hive-postgres:5432/metastore</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>org.postgresql.Driver</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>hive</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>hive</value>
+  </property>
+
+  <!-- ── Lokasi warehouse di HDFS ──────────────────────────────────────── -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>hdfs://namenode:9000/user/hive/warehouse</value>
+    <description>Direktori default tempat data tabel Hive disimpan di HDFS.</description>
+  </property>
+
+  <!-- ── Schema auto-create (dipakai saat pertama kali init) ───────────── -->
+  <property>
+    <name>datanucleus.schema.autoCreateAll</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>hive.metastore.schema.verification</name>
+    <value>true</value>
+  </property>
+
+  <!-- ── HiveServer2 ────────────────────────────────────────────────────── -->
+  <property>
+    <name>hive.server2.thrift.port</name>
+    <value>10000</value>
+  </property>
+  <property>
+    <name>hive.server2.thrift.bind.host</name>
+    <value>0.0.0.0</value>
+  </property>
+  <property>
+    <name>hive.server2.webui.port</name>
+    <value>10002</value>
+  </property>
+
+  <!-- ── Nonaktifkan auth untuk eksperimen ─────────────────────────────── -->
+  <property>
+    <name>hive.server2.authentication</name>
+    <value>NONE</value>
+  </property>
+  <property>
+    <name>hive.metastore.event.db.notification.api.auth</name>
+    <value>false</value>
+  </property>
+
+</configuration>

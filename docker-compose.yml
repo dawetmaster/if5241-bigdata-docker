@@ -5,27 +5,46 @@ services:
   # === HDFS ===
   namenode:
     image: openeuler/hadoop:latest
+    container_name: namenode
     hostname: namenode
-    command: ["hdfs", "namenode"]
+    command:
+      - bash
+      - -c
+      - |
+        # Format hanya jika belum pernah di-format (tidak ada fsimage)
+        if [ ! -d /tmp/hadoop-data/namenode/current ]; then
+          hdfs namenode -format -nonInteractive -force
+        fi
+        hdfs namenode
     ports:
       - "9870:9870"  # Web UI
-      - "9000:9000"  # HDFS IPC — wajib untuk client (hdfs dfs, Spark, dsb)
+      - "9000:9000"  # HDFS IPC — untuk client (hdfs dfs, Spark, dsb)
     environment:
       CLUSTER_NAME: local-cluster
+      # HADOOP_CONF_DIR agar Hadoop baca config dari volume yang kita mount
+      HADOOP_CONF_DIR: /etc/hadoop-custom
     volumes:
-      - hadoop_namenode:/tmp/hadoop-root
-      - ./hadoop:/home/hadoop  # direktori lokal host → dalam container
+      - hadoop_namenode:/tmp/hadoop-data/namenode
+      - ./hadoop-config:/etc/hadoop-custom:ro  # core-site.xml & hdfs-site.xml
+      - ./hadoop:/home/hadoop                  # staging area: host → HDFS
 
   datanode:
     image: openeuler/hadoop:latest
+    container_name: datanode
+    hostname: datanode
     command: ["hdfs", "datanode"]
     depends_on: [namenode]
+    environment:
+      HADOOP_CONF_DIR: /etc/hadoop-custom
     volumes:
-      - hadoop_datanode:/tmp/hadoop-root
+      - hadoop_datanode:/tmp/hadoop-data/datanode
+      - ./hadoop-config:/etc/hadoop-custom:ro  # harus config yang SAMA dengan namenode
+      - ./hadoop:/home/hadoop
 
   # === KAFKA (KRaft, no ZooKeeper) ===
   kafka:
     image: apache/kafka:4.1.1
+    container_name: kafka
     hostname: kafka
     ports:
       - "9092:9092"    # EXTERNAL — dari host
@@ -43,6 +62,7 @@ services:
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
     ports:
       - "8080:8080"
     environment:
@@ -53,6 +73,7 @@ services:
   # === SPARK ===
   spark-master:
     image: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
+    container_name: spark-master
     user: root
     command: ["/opt/spark/sbin/start-master.sh"]
     environment:
@@ -63,6 +84,7 @@ services:
 
   spark-worker:
     image: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
+    container_name: spark-worker
     user: root
     command: ["/opt/spark/sbin/start-worker.sh", "spark://spark-master:7077"]
     environment:
@@ -84,6 +106,7 @@ services:
       args:
         SPARK_IMAGE: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
     image: local/jupyter-spark:3.5.1   # tag lokal agar tidak confuse dengan image upstream
+    container_name: jupyter
     user: root
     ports:
       - "8888:8888"
@@ -94,9 +117,81 @@ services:
     depends_on: [spark-master]
 
 
+
+  # === HIVE ===
+  # Terdiri dari tiga service:
+  #   1. hive-postgres   — PostgreSQL sebagai metastore database (persist metadata tabel/schema)
+  #   2. hive-metastore  — Thrift server yang menyimpan dan melayani metadata
+  #   3. hive-server2    — JDBC endpoint untuk query HiveQL (Beeline, Spark, BI tools)
+  #
+  # Versi: apache/hive:4.0.1 — kompatibel dengan Hadoop 3.4.1 + Java 17
+
+  hive-postgres:
+    image: postgres:16-alpine
+    container_name: hive-postgres
+    hostname: hive-postgres
+    environment:
+      POSTGRES_DB: metastore
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+    ports:
+      - "5432:5432"
+    volumes:
+      - hive_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hive-metastore:
+    image: apache/hive:4.0.1
+    container_name: hive-metastore
+    hostname: hive-metastore
+    depends_on:
+      hive-postgres:
+        condition: service_healthy
+      namenode:
+        condition: service_started
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      # Inject JDBC driver PostgreSQL ke classpath Hive
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres:5432/metastore
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+    ports:
+      - "9083:9083"   # Thrift Metastore — dipakai Spark: spark.hive.metastore.uris
+    volumes:
+      - ./hadoop-config/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./hadoop-config/core-site.xml:/opt/hive/conf/core-site.xml:ro
+      - ./hadoop-config/hdfs-site.xml:/opt/hive/conf/hdfs-site.xml:ro
+
+  hive-server2:
+    image: apache/hive:4.0.1
+    container_name: hive-server2
+    hostname: hive-server2
+    depends_on:
+      hive-metastore:
+        condition: service_started
+    environment:
+      SERVICE_NAME: hiveserver2
+      SERVICE_OPTS: >-
+        -Dhive.metastore.uris=thrift://hive-metastore:9083
+    ports:
+      - "10000:10000"  # JDBC/Beeline: jdbc:hive2://localhost:10000
+      - "10002:10002"  # HiveServer2 Web UI
+    volumes:
+      - ./hadoop-config/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+      - ./hadoop-config/core-site.xml:/opt/hive/conf/core-site.xml:ro
+      - ./hadoop-config/hdfs-site.xml:/opt/hive/conf/hdfs-site.xml:ro
+
   # === NEO4J ===
   neo4j:
     image: neo4j:5
+    container_name: neo4j
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -106,6 +201,7 @@ services:
       - neo4j_data:/data
 
 volumes:
-  hadoop_namenode:
-  hadoop_datanode:
+  hive_postgres_data:   # metadata PostgreSQL untuk Hive Metastore
+  hadoop_namenode:   # metadata namenode (fsimage, edits) — JANGAN dihapus sembarangan
+  hadoop_datanode:   # blok data datanode
   neo4j_data:
