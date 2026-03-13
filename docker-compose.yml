@@ -11,7 +11,10 @@ services:
       - bash
       - -c
       - |
-        # Format hanya jika belum pernah di-format (tidak ada fsimage)
+        # Salin config kita ke HADOOP_CONF_DIR default agar hadoop-env.sh original
+        # (yang berisi JAVA_HOME) tetap terbaca — tidak di-replace seluruhnya
+        cp /etc/hadoop-custom/*.xml $HADOOP_CONF_DIR/
+        # Format hanya jika belum pernah di-format
         if [ ! -d /tmp/hadoop-data/namenode/current ]; then
           hdfs namenode -format -nonInteractive -force
         fi
@@ -21,24 +24,25 @@ services:
       - "9000:9000"  # HDFS IPC — untuk client (hdfs dfs, Spark, dsb)
     environment:
       CLUSTER_NAME: local-cluster
-      # HADOOP_CONF_DIR agar Hadoop baca config dari volume yang kita mount
-      HADOOP_CONF_DIR: /etc/hadoop-custom
     volumes:
       - hadoop_namenode:/tmp/hadoop-data/namenode
-      - ./hadoop-config:/etc/hadoop-custom:ro  # core-site.xml & hdfs-site.xml
+      - ./hadoop-config:/etc/hadoop-custom:ro  # core-site.xml & hdfs-site.xml di-copy ke HADOOP_CONF_DIR
       - ./hadoop:/home/hadoop                  # staging area: host → HDFS
 
   datanode:
     image: openeuler/hadoop:latest
     container_name: datanode
     hostname: datanode
-    command: ["hdfs", "datanode"]
+    command:
+      - bash
+      - -c
+      - |
+        cp /etc/hadoop-custom/*.xml $HADOOP_CONF_DIR/
+        hdfs datanode
     depends_on: [namenode]
-    environment:
-      HADOOP_CONF_DIR: /etc/hadoop-custom
     volumes:
       - hadoop_datanode:/tmp/hadoop-data/datanode
-      - ./hadoop-config:/etc/hadoop-custom:ro  # harus config yang SAMA dengan namenode
+      - ./hadoop-config:/etc/hadoop-custom:ro
       - ./hadoop:/home/hadoop
 
   # === KAFKA (KRaft, no ZooKeeper) ===
@@ -156,7 +160,6 @@ services:
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres
-      # Inject JDBC driver PostgreSQL ke classpath Hive
       SERVICE_OPTS: >-
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
         -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres:5432/metastore
@@ -168,6 +171,9 @@ services:
       - ./hadoop-config/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
       - ./hadoop-config/core-site.xml:/opt/hive/conf/core-site.xml:ro
       - ./hadoop-config/hdfs-site.xml:/opt/hive/conf/hdfs-site.xml:ro
+      # Driver PostgreSQL WAJIB di-mount — tidak include di image apache/hive
+      # Download via: ./setup.sh atau ./setup.ps1 (sudah otomatis)
+      - ./hive-lib/postgres.jar:/opt/hive/lib/postgres.jar:ro
 
   hive-server2:
     image: apache/hive:4.0.1
@@ -178,6 +184,8 @@ services:
         condition: service_started
     environment:
       SERVICE_NAME: hiveserver2
+      # IS_RESUME=true: skip schema init — schema diurus oleh hive-metastore
+      IS_RESUME: "true"
       SERVICE_OPTS: >-
         -Dhive.metastore.uris=thrift://hive-metastore:9083
     ports:
@@ -187,6 +195,7 @@ services:
       - ./hadoop-config/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
       - ./hadoop-config/core-site.xml:/opt/hive/conf/core-site.xml:ro
       - ./hadoop-config/hdfs-site.xml:/opt/hive/conf/hdfs-site.xml:ro
+      - ./hive-lib/postgres.jar:/opt/hive/lib/postgres.jar:ro
 
   # === NEO4J ===
   neo4j:

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# hdfs-init.sh — Format HDFS dan buat struktur direktori awal
+# hdfs-init.sh — Buat struktur direktori awal di HDFS
 #
-# Jalankan SEKALI setelah namenode dan datanode pertama kali up:
-#   ./hdfs-init.sh          (Linux/macOS)
-#   bash hdfs-init.sh       (Windows Git Bash / WSL)
+# Format NameNode sudah ditangani otomatis oleh docker-compose.yml saat
+# container pertama kali start. Skrip ini hanya membuat direktori HDFS
+# dan memverifikasi cluster siap digunakan.
 #
-# Aman dijalankan ulang — cek apakah HDFS sudah pernah di-format sebelumnya.
+# Jalankan setelah 'docker compose up -d':
+#   ./hdfs-init.sh        (Linux/macOS)
+#   bash hdfs-init.sh     (Windows Git Bash / WSL)
 # =============================================================================
 
 set -euo pipefail
@@ -17,91 +19,103 @@ info() { echo -e "  ${CYAN}[--]${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[!!]${NC} $*"; }
 fail() { echo -e "  ${RED}[XX]${NC} $*"; exit 1; }
 
-NAMENODE_CONTAINER="bigdata-namenode-1"   # nama container docker compose (compose v2 pakai project-service-N)
+NAMENODE="namenode"
+DATANODE="datanode"
 
 echo ""
 echo -e "${CYAN}============================================================${NC}"
-echo -e "${CYAN}  HDFS Init — Format & Buat Direktori${NC}"
+echo -e "${CYAN}  HDFS Init — Inisialisasi Direktori${NC}"
 echo -e "${CYAN}============================================================${NC}"
 echo ""
+
+# -----------------------------------------------------------------------------
+# Helper: cek container running via docker inspect
+# -----------------------------------------------------------------------------
+container_running() {
+    local state
+    state=$(docker inspect --format '{{.State.Running}}' "$1" 2>/dev/null || echo "false")
+    [ "$state" = "true" ]
+}
+
+# -----------------------------------------------------------------------------
+# Helper: cek port dari HOST via bash built-in /dev/tcp
+# -----------------------------------------------------------------------------
+port_open() {
+    (echo > /dev/tcp/"$1"/"$2") 2>/dev/null
+}
 
 # -----------------------------------------------------------------------------
 # 1. Cek namenode container berjalan
 # -----------------------------------------------------------------------------
-info "Memeriksa namenode container..."
-
-if ! docker compose ps --status running namenode 2>/dev/null | grep -q "namenode"; then
-    fail "Container namenode tidak berjalan. Jalankan 'docker compose up -d' terlebih dahulu."
+info "Memeriksa container namenode..."
+if ! container_running "$NAMENODE"; then
+    fail "Container '$NAMENODE' tidak berjalan. Jalankan 'docker compose up -d' terlebih dahulu."
 fi
-ok "Namenode container aktif"
+ok "Container namenode aktif"
 
 # -----------------------------------------------------------------------------
-# 2. Tunggu NameNode siap (port 9870 Web UI)
+# 2. Tunggu NameNode siap — cek port 9870 dari host
 # -----------------------------------------------------------------------------
-info "Menunggu NameNode Web UI siap di port 9870..."
-MAX_WAIT=60
+info "Menunggu NameNode siap di port 9870..."
+MAX_WAIT=120
 ELAPSED=0
-until docker compose exec -T namenode curl -sf http://localhost:9870 > /dev/null 2>&1; do
+until port_open localhost 9870; do
     if [ $ELAPSED -ge $MAX_WAIT ]; then
-        fail "NameNode tidak merespons setelah ${MAX_WAIT} detik. Cek log: docker compose logs namenode"
+        fail "Port 9870 tidak terbuka setelah ${MAX_WAIT}s. Cek: docker compose logs namenode"
     fi
-    sleep 3
-    ELAPSED=$((ELAPSED + 3))
-    echo -ne "\r  ${CYAN}[--]${NC} Menunggu... ${ELAPSED}s"
+    sleep 3; ELAPSED=$((ELAPSED + 3))
+    echo -ne "\r  ${CYAN}[--]${NC} Menunggu port 9870... ${ELAPSED}s"
 done
 echo ""
-ok "NameNode Web UI merespons"
+ok "NameNode merespons di port 9870"
 
 # -----------------------------------------------------------------------------
-# 3. Cek apakah HDFS sudah pernah di-format (ada fsimage)
+# 3. Tunggu NameNode keluar dari safemode
+#    (NameNode masuk safemode saat startup — tidak bisa mkdir sebelum keluar)
 # -----------------------------------------------------------------------------
-info "Memeriksa apakah HDFS sudah pernah di-format..."
-
-ALREADY_FORMATTED=$(docker compose exec -T namenode \
-    bash -c 'ls /tmp/hadoop-data/namenode/current/fsimage_0000000000000000000 2>/dev/null && echo yes || echo no')
-
-if echo "$ALREADY_FORMATTED" | grep -q "yes"; then
-    warn "HDFS sudah pernah di-format. Melewati langkah format."
-    warn "Jika ingin format ulang (DATA HILANG): docker compose down -v lalu jalankan ulang skrip ini."
-else
-    # -----------------------------------------------------------------------------
-    # 4. Format NameNode
-    # -----------------------------------------------------------------------------
-    info "Memformat HDFS NameNode..."
-    docker compose exec -T namenode \
-        bash -c 'hdfs namenode -format -nonInteractive -force 2>&1' | tail -5
-    ok "Format selesai"
-fi
-
-# Restart namenode agar membaca fsimage baru (jika baru saja di-format)
-info "Restart namenode untuk membaca state terbaru..."
-docker compose restart namenode
-sleep 8
-
-# -----------------------------------------------------------------------------
-# 5. Tunggu DataNode terhubung ke NameNode
-# -----------------------------------------------------------------------------
-info "Menunggu DataNode terhubung ke NameNode..."
+info "Menunggu NameNode keluar dari safemode..."
 ELAPSED=0
-until docker compose exec -T namenode \
-    bash -c 'hdfs dfsadmin -report 2>/dev/null | grep -q "Live datanodes"'; do
-    if [ $ELAPSED -ge 60 ]; then
-        warn "DataNode belum terhubung setelah 60 detik."
-        warn "Cek: docker compose logs datanode"
+until docker exec "$NAMENODE" \
+    bash -c 'hdfs dfsadmin -safemode get 2>/dev/null | grep -q "OFF"'; do
+    if [ $ELAPSED -ge 120 ]; then
+        warn "NameNode masih dalam safemode setelah 120s, coba paksa keluar..."
+        docker exec "$NAMENODE" bash -c 'hdfs dfsadmin -safemode leave 2>/dev/null' || true
         break
     fi
-    sleep 3
-    ELAPSED=$((ELAPSED + 3))
-    echo -ne "\r  ${CYAN}[--]${NC} Menunggu DataNode... ${ELAPSED}s"
+    sleep 3; ELAPSED=$((ELAPSED + 3))
+    echo -ne "\r  ${CYAN}[--]${NC} Menunggu safemode OFF... ${ELAPSED}s"
 done
 echo ""
-
-LIVE=$(docker compose exec -T namenode \
-    bash -c 'hdfs dfsadmin -report 2>/dev/null | grep "Live datanodes" | grep -o "[0-9]*"' || echo "0")
-ok "DataNode terhubung: ${LIVE} node"
+ok "NameNode siap (safemode OFF)"
 
 # -----------------------------------------------------------------------------
-# 6. Buat struktur direktori awal di HDFS
+# 4. Tunggu DataNode terhubung
+# -----------------------------------------------------------------------------
+info "Memeriksa container datanode..."
+if ! container_running "$DATANODE"; then
+    warn "Container '$DATANODE' tidak berjalan — lewati pengecekan DataNode."
+else
+    info "Menunggu DataNode register ke NameNode..."
+    ELAPSED=0
+    until docker exec "$NAMENODE" \
+        bash -c 'hdfs dfsadmin -report 2>/dev/null | grep -q "Live datanodes (1)"'; do
+        if [ $ELAPSED -ge 90 ]; then
+            warn "DataNode belum terhubung setelah 90s. Cek: docker compose logs datanode"
+            break
+        fi
+        sleep 3; ELAPSED=$((ELAPSED + 3))
+        echo -ne "\r  ${CYAN}[--]${NC} Menunggu DataNode... ${ELAPSED}s"
+    done
+    echo ""
+
+    LIVE=$(docker exec "$NAMENODE" \
+        bash -c 'hdfs dfsadmin -report 2>/dev/null | grep -oP "Live datanodes \(\K[0-9]+"' \
+        2>/dev/null || echo "0")
+    ok "DataNode terhubung: ${LIVE:-0} node"
+fi
+
+# -----------------------------------------------------------------------------
+# 5. Buat struktur direktori awal di HDFS
 # -----------------------------------------------------------------------------
 info "Membuat struktur direktori HDFS..."
 
@@ -109,46 +123,50 @@ HDFS_DIRS=(
     "/user"
     "/user/root"
     "/user/data"
+    "/user/hive"
+    "/user/hive/warehouse"
     "/tmp"
     "/data/raw"
     "/data/processed"
 )
 
 for dir in "${HDFS_DIRS[@]}"; do
-    docker compose exec -T namenode \
-        bash -c "hdfs dfs -mkdir -p ${dir} 2>/dev/null && echo created || echo exists" | grep -q "created" \
-        && ok "Dibuat: ${dir}" \
-        || info "Sudah ada: ${dir}"
+    RESULT=$(docker exec "$NAMENODE" \
+        bash -c "hdfs dfs -mkdir -p ${dir} 2>/dev/null && echo created || echo exists")
+    if echo "$RESULT" | grep -q "created"; then
+        ok "Dibuat: ${dir}"
+    else
+        info "Sudah ada: ${dir}"
+    fi
 done
 
-# Beri permission terbuka untuk eksperimen
-docker compose exec -T namenode bash -c 'hdfs dfs -chmod -R 777 / 2>/dev/null' || true
+docker exec "$NAMENODE" bash -c 'hdfs dfs -chmod -R 777 / 2>/dev/null' || true
+ok "Permission 777 diterapkan"
 
 # -----------------------------------------------------------------------------
-# 7. Verifikasi akhir
+# 6. Verifikasi akhir
 # -----------------------------------------------------------------------------
 echo ""
-info "Verifikasi struktur HDFS:"
-docker compose exec -T namenode bash -c 'hdfs dfs -ls /' 2>/dev/null | sed 's/^/     /'
+info "Struktur HDFS:"
+docker exec "$NAMENODE" bash -c 'hdfs dfs -ls /' 2>/dev/null | sed 's/^/     /' || true
 
 echo ""
 info "Laporan cluster:"
-docker compose exec -T namenode bash -c 'hdfs dfsadmin -report 2>/dev/null | head -20' | sed 's/^/     /'
+docker exec "$NAMENODE" bash -c 'hdfs dfsadmin -report 2>/dev/null | head -15' | sed 's/^/     /' || true
 
 echo ""
 echo -e "${CYAN}============================================================${NC}"
 echo -e "${GREEN}  HDFS siap digunakan!${NC}"
 echo -e "${CYAN}============================================================${NC}"
 echo ""
-echo -e "  Web UI   : ${CYAN}http://localhost:9870${NC}"
+echo -e "  Web UI    : ${CYAN}http://localhost:9870${NC}"
 echo ""
-echo -e "  Contoh perintah:"
 echo -e "  Upload file ke HDFS:"
-echo -e "    ${CYAN}cp myfile.csv ./hadoop/${NC}                               # salin ke staging"
-echo -e "    ${CYAN}docker compose exec namenode hdfs dfs -put /home/hadoop/myfile.csv /user/data/${NC}"
+echo -e "    ${CYAN}cp myfile.csv ./hadoop/${NC}                                 # salin ke staging"
+echo -e "    ${CYAN}docker exec namenode hdfs dfs -put /home/hadoop/myfile.csv /user/data/${NC}"
 echo ""
-echo -e "  List file di HDFS:"
-echo -e "    ${CYAN}docker compose exec namenode hdfs dfs -ls /user/data/${NC}"
+echo -e "  List file:"
+echo -e "    ${CYAN}docker exec namenode hdfs dfs -ls /user/data/${NC}"
 echo ""
 echo -e "  Dari notebook Spark:"
 echo -e "    ${CYAN}df = spark.read.csv('hdfs://namenode:9000/user/data/myfile.csv')${NC}"

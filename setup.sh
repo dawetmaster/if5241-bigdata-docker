@@ -54,6 +54,7 @@ echo -e "${ARROW} Membuat direktori..."
 DIRS=(
     "hadoop"           # bind mount namenode & datanode — staging area HDFS
     "hadoop-config"    # config XML Hadoop & Hive yang di-mount ke container
+    "hive-lib"         # PostgreSQL JDBC driver untuk Hive (di-download otomatis)
     "notebooks"        # bind mount Jupyter — tempat menyimpan .ipynb
 )
 
@@ -95,6 +96,10 @@ REQUIRED_FILES=(
     "hdfs-init.sh"
     "hive-init.sh"
 )
+# File yang di-generate (tidak error jika belum ada, tapi dicek setelah download)
+GENERATED_FILES=(
+    "hive-lib/postgres.jar"
+)
 
 ALL_OK=true
 for f in "${REQUIRED_FILES[@]}"; do
@@ -119,6 +124,29 @@ fi
 # -----------------------------------------------------------------------------
 # 5. Instruksi langkah selanjutnya
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Download PostgreSQL JDBC driver untuk Hive
+# -----------------------------------------------------------------------------
+echo -e "${ARROW} Mengunduh PostgreSQL JDBC driver untuk Hive..."
+
+PG_JAR_URL="https://jdbc.postgresql.org/download/postgresql-42.7.5.jar"
+PG_JAR_DEST="hive-lib/postgres.jar"
+
+if [ -f "$PG_JAR_DEST" ]; then
+    echo -e "  ${YELLOW}⚠ hive-lib/postgres.jar sudah ada, dilewati${NC}"
+else
+    if command -v curl &> /dev/null; then
+        curl -fsSL "$PG_JAR_URL" -o "$PG_JAR_DEST"             && echo -e "  ${CHECKMARK} Diunduh: $PG_JAR_DEST"             || echo -e "  ${RED}✗ Gagal mengunduh driver. Download manual dari:${NC} ${PG_JAR_URL}"
+    elif command -v wget &> /dev/null; then
+        wget -q "$PG_JAR_URL" -O "$PG_JAR_DEST"             && echo -e "  ${CHECKMARK} Diunduh: $PG_JAR_DEST"             || echo -e "  ${RED}✗ Gagal mengunduh driver. Download manual dari:${NC} ${PG_JAR_URL}"
+    else
+        echo -e "  ${RED}✗ curl dan wget tidak tersedia.${NC}"
+        echo -e "     Download manual: ${CYAN}${PG_JAR_URL}${NC}"
+        echo -e "     Simpan sebagai: ${CYAN}${PG_JAR_DEST}${NC}"
+    fi
+fi
+echo ""
+
 echo -e "${CYAN}=================================================================${NC}"
 echo -e "${GREEN}  Setup selesai. Langkah selanjutnya:${NC}"
 echo -e "${CYAN}=================================================================${NC}"

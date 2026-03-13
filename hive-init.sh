@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# hive-init.sh — Inisialisasi Hive Metastore schema dan direktori HDFS
+# hive-init.sh — Verifikasi Hive Metastore dan buat direktori HDFS warehouse
 #
-# Jalankan SEKALI setelah hive-postgres dan hive-metastore pertama kali up:
-#   ./hive-init.sh
+# Prasyarat: hdfs-init.sh sudah selesai dijalankan.
+# Schema metastore di-init otomatis oleh container hive-metastore saat start.
+# Skrip ini hanya memverifikasi semua komponen siap dan buat direktori HDFS.
 #
-# Prasyarat: HDFS sudah diinisialisasi (hdfs-init.sh sudah dijalankan).
+# Jalankan setelah 'docker compose up -d' dan hdfs-init.sh selesai:
+#   ./hive-init.sh        (Linux/macOS)
+#   bash hive-init.sh     (Windows Git Bash / WSL)
 # =============================================================================
 
 set -euo pipefail
@@ -18,17 +21,33 @@ fail() { echo -e "  ${RED}[XX]${NC} $*"; exit 1; }
 
 echo ""
 echo -e "${CYAN}============================================================${NC}"
-echo -e "${CYAN}  Hive Init — Metastore Schema & HDFS Warehouse${NC}"
+echo -e "${CYAN}  Hive Init — Verifikasi & Inisialisasi Direktori${NC}"
 echo -e "${CYAN}============================================================${NC}"
 echo ""
 
 # -----------------------------------------------------------------------------
-# 1. Cek container yang dibutuhkan berjalan
+# Helper: cek container running via docker inspect
+# -----------------------------------------------------------------------------
+container_running() {
+    local state
+    state=$(docker inspect --format '{{.State.Running}}' "$1" 2>/dev/null || echo "false")
+    [ "$state" = "true" ]
+}
+
+# -----------------------------------------------------------------------------
+# Helper: cek port dari HOST via bash built-in /dev/tcp
+# -----------------------------------------------------------------------------
+port_open() {
+    (echo > /dev/tcp/"$1"/"$2") 2>/dev/null
+}
+
+# -----------------------------------------------------------------------------
+# 1. Cek semua container berjalan
 # -----------------------------------------------------------------------------
 info "Memeriksa container..."
 
 for svc in hive-postgres hive-metastore namenode; do
-    if docker compose ps --status running "$svc" 2>/dev/null | grep -q "$svc"; then
+    if container_running "$svc"; then
         ok "$svc aktif"
     else
         fail "Container '$svc' tidak berjalan. Jalankan 'docker compose up -d' terlebih dahulu."
@@ -36,47 +55,70 @@ for svc in hive-postgres hive-metastore namenode; do
 done
 
 # -----------------------------------------------------------------------------
-# 2. Tunggu PostgreSQL benar-benar siap
+# 2. Verifikasi postgres.jar ada (wajib untuk Hive + PostgreSQL)
+# -----------------------------------------------------------------------------
+info "Memeriksa PostgreSQL JDBC driver..."
+if [ ! -f "./hive-lib/postgres.jar" ]; then
+    fail "File ./hive-lib/postgres.jar tidak ditemukan.\nJalankan setup.sh (atau setup.ps1) terlebih dahulu untuk mengunduhnya."
+fi
+ok "postgres.jar tersedia"
+
+# -----------------------------------------------------------------------------
+# 3. Tunggu PostgreSQL siap
 # -----------------------------------------------------------------------------
 info "Menunggu PostgreSQL siap..."
 ELAPSED=0
-until docker compose exec -T hive-postgres pg_isready -U hive -d metastore > /dev/null 2>&1; do
+until docker exec hive-postgres pg_isready -U hive -d metastore > /dev/null 2>&1; do
     if [ $ELAPSED -ge 30 ]; then
-        fail "PostgreSQL tidak siap setelah 30 detik."
+        fail "PostgreSQL tidak siap setelah 30s."
     fi
-    sleep 2; ELAPSED=$((ELAPSED+2))
+    sleep 2; ELAPSED=$((ELAPSED + 2))
     echo -ne "\r  ${CYAN}[--]${NC} Menunggu PostgreSQL... ${ELAPSED}s"
 done
 echo ""
 ok "PostgreSQL siap"
 
 # -----------------------------------------------------------------------------
-# 3. Cek apakah schema sudah pernah diinisialisasi
+# 4. Tunggu Hive Metastore siap (port 9083)
+#    Schema init dijalankan otomatis oleh container saat start
 # -----------------------------------------------------------------------------
-info "Memeriksa apakah schema metastore sudah ada..."
+info "Menunggu Hive Metastore siap di port 9083..."
+MAX_WAIT=180
+ELAPSED=0
+until port_open localhost 9083; do
+    if [ $ELAPSED -ge $MAX_WAIT ]; then
+        fail "Port 9083 tidak terbuka setelah ${MAX_WAIT}s.\nCek log: docker compose logs hive-metastore"
+    fi
+    sleep 5; ELAPSED=$((ELAPSED + 5))
+    echo -ne "\r  ${CYAN}[--]${NC} Menunggu port 9083... ${ELAPSED}s (schema init bisa butuh ~60s)"
+done
+echo ""
+ok "Hive Metastore merespons di port 9083"
 
-SCHEMA_EXISTS=$(docker compose exec -T hive-postgres \
+# -----------------------------------------------------------------------------
+# 5. Verifikasi schema berhasil diinisialisasi di PostgreSQL
+# -----------------------------------------------------------------------------
+info "Memverifikasi schema metastore di PostgreSQL..."
+ELAPSED=0
+until docker exec hive-postgres \
     psql -U hive -d metastore -tAc \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='TBLS';" \
-    2>/dev/null || echo "0")
-
-if [ "$(echo $SCHEMA_EXISTS | tr -d '[:space:]')" = "1" ]; then
-    warn "Schema metastore sudah ada. Melewati langkah initSchema."
-else
-    # -----------------------------------------------------------------------------
-    # 4. Inisialisasi schema metastore via schematool
-    # -----------------------------------------------------------------------------
-    info "Menginisialisasi schema metastore Hive di PostgreSQL..."
-    docker compose exec -T hive-metastore \
-        bash -c '/opt/hive/bin/schematool -dbType postgres -initSchema 2>&1' \
-        | grep -E "Initialization|Error|Exception|completed" || true
-    ok "Schema metastore berhasil diinisialisasi"
-fi
+    2>/dev/null | grep -q "1"; do
+    if [ $ELAPSED -ge 60 ]; then
+        warn "Tabel TBLS belum ada — schema mungkin belum selesai diinisialisasi."
+        warn "Cek log: docker compose logs hive-metastore"
+        break
+    fi
+    sleep 5; ELAPSED=$((ELAPSED + 5))
+    echo -ne "\r  ${CYAN}[--]${NC} Menunggu schema... ${ELAPSED}s"
+done
+echo ""
+ok "Schema metastore tersedia di PostgreSQL"
 
 # -----------------------------------------------------------------------------
-# 5. Buat direktori HDFS untuk Hive warehouse
+# 6. Buat direktori HDFS untuk Hive warehouse (jika belum ada dari hdfs-init)
 # -----------------------------------------------------------------------------
-info "Membuat direktori HDFS untuk Hive..."
+info "Memastikan direktori HDFS Hive tersedia..."
 
 HIVE_DIRS=(
     "/user/hive"
@@ -85,38 +127,38 @@ HIVE_DIRS=(
 )
 
 for dir in "${HIVE_DIRS[@]}"; do
-    docker compose exec -T namenode \
-        bash -c "hdfs dfs -mkdir -p ${dir} && hdfs dfs -chmod 777 ${dir} && echo created || echo exists" \
-        | grep -q "created" \
-        && ok "Dibuat: ${dir}" \
-        || info "Sudah ada: ${dir}"
-done
-
-# -----------------------------------------------------------------------------
-# 6. Restart hive-server2 agar terhubung ke metastore yang sudah diinisialisasi
-# -----------------------------------------------------------------------------
-info "Restart hive-server2..."
-docker compose restart hive-server2
-sleep 5
-ok "hive-server2 restarted"
-
-# -----------------------------------------------------------------------------
-# 7. Verifikasi koneksi via Beeline
-# -----------------------------------------------------------------------------
-info "Verifikasi koneksi HiveServer2..."
-ELAPSED=0
-until docker compose exec -T hive-server2 \
-    bash -c '/opt/hive/bin/beeline -u "jdbc:hive2://localhost:10000" -e "SHOW DATABASES;" 2>&1' \
-    | grep -q "default"; do
-    if [ $ELAPSED -ge 60 ]; then
-        warn "HiveServer2 belum merespons setelah 60 detik. Cek: docker compose logs hive-server2"
-        break
+    RESULT=$(docker exec namenode \
+        bash -c "hdfs dfs -mkdir -p ${dir} 2>/dev/null && echo created || echo exists")
+    if echo "$RESULT" | grep -q "created"; then
+        ok "Dibuat: ${dir}"
+    else
+        info "Sudah ada: ${dir}"
     fi
-    sleep 5; ELAPSED=$((ELAPSED+5))
-    echo -ne "\r  ${CYAN}[--]${NC} Menunggu HiveServer2... ${ELAPSED}s"
 done
-echo ""
-ok "HiveServer2 merespons — database default tersedia"
+
+docker exec namenode bash -c 'hdfs dfs -chmod -R 777 /user/hive /tmp/hive 2>/dev/null' || true
+
+# -----------------------------------------------------------------------------
+# 7. Cek hive-server2 (opsional — mungkin masih starting)
+# -----------------------------------------------------------------------------
+info "Memeriksa hive-server2..."
+if container_running "hive-server2"; then
+    info "Menunggu HiveServer2 siap di port 10000..."
+    ELAPSED=0
+    until port_open localhost 10000; do
+        if [ $ELAPSED -ge 120 ]; then
+            warn "HiveServer2 belum merespons setelah 120s."
+            warn "Cek log: docker compose logs hive-server2"
+            break
+        fi
+        sleep 5; ELAPSED=$((ELAPSED + 5))
+        echo -ne "\r  ${CYAN}[--]${NC} Menunggu port 10000... ${ELAPSED}s"
+    done
+    echo ""
+    port_open localhost 10000 && ok "HiveServer2 merespons di port 10000" || true
+else
+    warn "Container hive-server2 tidak berjalan — lewati."
+fi
 
 # -----------------------------------------------------------------------------
 # 8. Summary
@@ -126,22 +168,15 @@ echo -e "${CYAN}============================================================${NC
 echo -e "${GREEN}  Hive siap digunakan!${NC}"
 echo -e "${CYAN}============================================================${NC}"
 echo ""
-echo -e "  Web UI      : ${CYAN}http://localhost:10002${NC}"
-echo -e "  JDBC string : ${CYAN}jdbc:hive2://localhost:10000${NC}"
+echo -e "  HiveServer2 Web UI : ${CYAN}http://localhost:10002${NC}"
+echo -e "  JDBC string        : ${CYAN}jdbc:hive2://localhost:10000${NC}"
 echo ""
-echo -e "  Contoh query via Beeline (dari dalam container):"
-echo -e "    ${CYAN}docker compose exec hive-server2 beeline -u 'jdbc:hive2://localhost:10000'${NC}"
+echo -e "  Query via Beeline:"
+echo -e "    ${CYAN}docker exec -it hive-server2 beeline -u 'jdbc:hive2://localhost:10000'${NC}"
 echo ""
-echo -e "  Contoh buat tabel dari HDFS:"
-echo -e "    ${CYAN}CREATE TABLE test (id INT, name STRING)${NC}"
-echo -e "    ${CYAN}ROW FORMAT DELIMITED FIELDS TERMINATED BY ','${NC}"
-echo -e "    ${CYAN}STORED AS TEXTFILE${NC}"
-echo -e "    ${CYAN}LOCATION 'hdfs://namenode:9000/user/data/test';${NC}"
-echo ""
-echo -e "  Akses dari Spark (di notebook):"
-echo -e "    ${CYAN}spark = SparkSession.builder \\\\${NC}"
-echo -e "    ${CYAN}    .config('spark.hive.metastore.uris', 'thrift://hive-metastore:9083') \\\\${NC}"
-echo -e "    ${CYAN}    .enableHiveSupport() \\\\${NC}"
+echo -e "  Akses dari Spark (notebook):"
+echo -e "    ${CYAN}spark = SparkSession.builder \\${NC}"
+echo -e "    ${CYAN}    .config('spark.hive.metastore.uris', 'thrift://hive-metastore:9083') \\${NC}"
+echo -e "    ${CYAN}    .enableHiveSupport() \\${NC}"
 echo -e "    ${CYAN}    .getOrCreate()${NC}"
-echo -e "    ${CYAN}spark.sql('SHOW TABLES').show()${NC}"
 echo ""
