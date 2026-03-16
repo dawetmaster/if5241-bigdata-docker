@@ -102,13 +102,9 @@ EXTERNAL://localhost:9092 → untuk aplikasi yang jalan di host
 
 ### Langkah 1 — Clone atau siapkan file
 
-Unduh dan ekstrak terlebih dahulu arsip yang disediakan sesuai dengan arsitektur device Anda:
-| Arsitektur | OS |
-|------------|----|
-| `amd64` | Windows, macOS (sebelum Apple Silicon), Linux |
-| `arm64` | Windows (untuk Snapdragon), macOS (Apple Silicon), Linux ARM |
+Unduh dari repo ini dengan clone secara langsung. Tidak perlu ekstrak karena sekarang stack Docker Compose sudah architecture-agnostic.
 
-Setelah ekstrak, pastikan ketiga file ini ada di direktori yang sama:
+Setelah clone, pastikan ketiga file ini ada di direktori yang sama:
 - `docker-compose.yml`
 - `Dockerfile.jupyter`
 - `requirements.jupyter.txt`
