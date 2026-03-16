@@ -49,8 +49,10 @@ try {
 Write-Step "Membuat direktori..."
 
 $dirs = @(
-    @{ Path = "hadoop";    Desc = "Staging area HDFS (bind mount namenode & datanode)" },
-    @{ Path = "notebooks"; Desc = "Direktori notebook Jupyter" }
+    @{ Path = "hadoop";        Desc = "Staging area HDFS (bind mount namenode & datanode)" },
+    @{ Path = "hadoop-config"; Desc = "Config XML Hadoop & Hive yang di-mount ke container" },
+    @{ Path = "hive-lib";      Desc = "PostgreSQL JDBC driver untuk Hive (di-download otomatis)" },
+    @{ Path = "notebooks";     Desc = "Direktori notebook Jupyter" }
 )
 
 foreach ($d in $dirs) {
@@ -84,7 +86,12 @@ Write-Step "Memeriksa file konfigurasi..."
 $requiredFiles = @(
     "docker-compose.yml",
     "Dockerfile.jupyter",
-    "requirements.jupyter.txt"
+    "requirements.jupyter.txt",
+    "hadoop-config\core-site.xml",
+    "hadoop-config\hdfs-site.xml",
+    "hadoop-config\hive-site.xml",
+    "hdfs-init.sh",
+    "hive-init.sh"
 )
 
 $allOk = $true
@@ -107,7 +114,28 @@ if (-not $allOk) {
 }
 
 # -----------------------------------------------------------------------------
-# 5. Cek WSL2 backend (opsional, hanya informasi)
+# 5. Download PostgreSQL JDBC driver untuk Hive
+# -----------------------------------------------------------------------------
+Write-Step "Mengunduh PostgreSQL JDBC driver untuk Hive..."
+
+$pgJarUrl  = "https://jdbc.postgresql.org/download/postgresql-42.7.5.jar"
+$pgJarDest = "hive-lib\postgres.jar"
+
+if (Test-Path $pgJarDest) {
+    Write-Skip "hive-lib\postgres.jar sudah ada, dilewati"
+} else {
+    try {
+        Invoke-WebRequest -Uri $pgJarUrl -OutFile $pgJarDest -UseBasicParsing
+        Write-Ok "Diunduh: $pgJarDest"
+    } catch {
+        Write-Fail "Gagal mengunduh driver PostgreSQL."
+        Write-Host "         Download manual dari: $pgJarUrl" -ForegroundColor Gray
+        Write-Host "         Simpan sebagai: $pgJarDest" -ForegroundColor Gray
+    }
+}
+
+# -----------------------------------------------------------------------------
+# 6. Cek WSL2 backend (opsional, hanya informasi)
 # -----------------------------------------------------------------------------
 Write-Step "Memeriksa konfigurasi Windows..."
 
@@ -143,14 +171,22 @@ Write-Host ""
 Write-Host "  2. Jalankan stack:" -ForegroundColor White
 Write-Host "     docker compose up -d" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  3. Akses UI:" -ForegroundColor White
-Write-Host "     JupyterLab  -> http://localhost:8888" -ForegroundColor Cyan
-Write-Host "     Spark UI    -> http://localhost:8081" -ForegroundColor Cyan
-Write-Host "     Kafka UI    -> http://localhost:8080" -ForegroundColor Cyan
-Write-Host "     HDFS UI     -> http://localhost:9870" -ForegroundColor Cyan
-Write-Host "     Neo4j       -> http://localhost:7474" -ForegroundColor Cyan
+Write-Host "  3. Inisialisasi HDFS (hanya sekali, setelah namenode up):" -ForegroundColor White
+Write-Host "     bash hdfs-init.sh" -ForegroundColor Cyan
+Write-Host "     (atau via WSL / Git Bash)" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  4. Upload file ke HDFS:" -ForegroundColor White
+Write-Host "  4. Inisialisasi Hive (hanya sekali, setelah hdfs-init selesai):" -ForegroundColor White
+Write-Host "     bash hive-init.sh" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  5. Akses UI:" -ForegroundColor White
+Write-Host "     JupyterLab   -> http://localhost:8888" -ForegroundColor Cyan
+Write-Host "     Spark UI     -> http://localhost:8081" -ForegroundColor Cyan
+Write-Host "     Kafka UI     -> http://localhost:8080" -ForegroundColor Cyan
+Write-Host "     HDFS UI      -> http://localhost:9870" -ForegroundColor Cyan
+Write-Host "     Neo4j        -> http://localhost:7474" -ForegroundColor Cyan
+Write-Host "     HiveServer2  -> http://localhost:10002" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  6. Upload file ke HDFS:" -ForegroundColor White
 Write-Host "     Salin file ke .\hadoop\, lalu dari PowerShell:" -ForegroundColor Gray
 Write-Host "     docker compose exec namenode hdfs dfs -put /home/hadoop/<file> /user/data/" -ForegroundColor Cyan
 Write-Host ""

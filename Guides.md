@@ -19,6 +19,7 @@ Panduan ini mencakup setup, operasional sehari-hari, troubleshooting, dan upgrad
 11. [Troubleshooting](#11-troubleshooting)
 12. [Upgrade Versi Komponen](#12-upgrade-versi-komponen)
 13. [Reset Bersih](#13-reset-bersih)
+14. [Menggunakan Apache Hive](#14-menggunakan-apache-hive)
 
 ---
 
@@ -28,7 +29,7 @@ Panduan ini mencakup setup, operasional sehari-hari, troubleshooting, dan upgrad
 |---|---|---|
 | Docker Desktop / Docker Engine | 24.x | Pastikan Docker daemon berjalan |
 | Docker Compose | v2 (plugin) | Gunakan `docker compose` bukan `docker-compose` |
-| RAM tersedia | 8 GB | Semua service aktif sekaligus |
+| RAM tersedia | 12 GB | Semua service aktif sekaligus (dengan Hive) |
 | Disk tersedia | 20 GB | Untuk image dan volume |
 | Arsitektur | amd64 atau arm64 | Apple Silicon didukung |
 
@@ -48,13 +49,24 @@ project/
 ├── docker-compose.yml          # Definisi semua service
 ├── Dockerfile.jupyter          # Custom image Jupyter berbasis Spark
 ├── requirements.jupyter.txt    # Python dependencies untuk Jupyter
+├── hdfs-init.sh                # Inisialisasi HDFS (jalankan sekali)
+├── hive-init.sh                # Inisialisasi Hive metastore (jalankan sekali)
+├── hadoop-config/              # Config XML yang di-mount ke Hadoop & Hive
+│   ├── core-site.xml
+│   ├── hdfs-site.xml
+│   └── hive-site.xml
+├── hadoop/                     # Staging area host ↔ HDFS
 └── notebooks/                  # Di-mount ke container Jupyter
 ```
 
-Buat folder `notebooks` sebelum menjalankan stack:
+Gunakan skrip setup untuk membuat direktori secara otomatis:
 
 ```bash
-mkdir -p notebooks
+# Linux / macOS
+chmod +x setup.sh && ./setup.sh
+
+# Windows (PowerShell)
+.\setup.ps1
 ```
 
 ---
@@ -70,6 +82,9 @@ mkdir -p notebooks
 | `spark-master` | `apache/spark:3.5.1-...` | `8081`, `7077` | Spark Master + UI |
 | `spark-worker` | `apache/spark:3.5.1-...` | — | Spark Worker |
 | `jupyter` | `local/jupyter-spark:3.5.1` | `8888` | JupyterLab (custom build) |
+| `hive-postgres` | `postgres:16-alpine` | `5432` | Metastore database untuk Hive |
+| `hive-metastore` | `apache/hive:4.0.1` | `9083` | Thrift Metastore server |
+| `hive-server2` | `apache/hive:4.0.1` | `10000`, `10002` | HiveServer2 JDBC + Web UI |
 | `neo4j` | `neo4j:5` | `7474`, `7687` | Graph database + Browser |
 
 ### Kafka Listener
@@ -120,7 +135,25 @@ docker compose up -d
 docker compose ps
 ```
 
-Semua service harus berstatus `running`. Tunggu 30–60 detik untuk Kafka dan Spark selesai inisialisasi sebelum menjalankan notebook.
+Semua service harus berstatus `running`. Tunggu 30–60 detik untuk Kafka dan Spark selesai inisialisasi.
+
+### Langkah 5 — Inisialisasi HDFS (hanya sekali)
+
+```bash
+chmod +x hdfs-init.sh
+./hdfs-init.sh
+```
+
+Skrip ini memformat NameNode (jika belum pernah), menunggu DataNode terhubung, dan membuat struktur direktori awal di HDFS. Aman dijalankan ulang — tidak akan format ulang jika sudah ada data.
+
+### Langkah 6 — Inisialisasi Hive (hanya sekali, setelah HDFS siap)
+
+```bash
+chmod +x hive-init.sh
+./hive-init.sh
+```
+
+Skrip ini menginisialisasi schema metastore di PostgreSQL via `schematool`, membuat direktori HDFS `/user/hive/warehouse`, dan memverifikasi koneksi HiveServer2.
 
 ---
 
@@ -176,6 +209,7 @@ Setelah stack berjalan, semua UI bisa diakses via browser:
 | **Spark Master** | http://localhost:8081 | — |
 | **Kafka UI** | http://localhost:8080 | — |
 | **HDFS NameNode** | http://localhost:9870 | — |
+| **HiveServer2 UI** | http://localhost:10002 | — |
 | **Neo4j Browser** | http://localhost:7474 | `neo4j` / `IF5241-bigdata` |
 
 ---
@@ -429,4 +463,117 @@ docker compose build jupyter
 docker compose up -d
 ```
 
-> **Peringatan:** `down -v` akan menghapus semua data HDFS, Kafka topics, dan Neo4j database secara permanen.
+> **Peringatan:** `down -v` akan menghapus semua data HDFS, Kafka topics, Neo4j database, dan Hive metastore secara permanen. Setelah `up` kembali, jalankan ulang `hdfs-init.sh` dan `hive-init.sh`.
+---
+
+## 14. Menggunakan Apache Hive
+
+### Arsitektur Hive di Stack Ini
+
+```
+HiveServer2 (port 10000/10002)
+      │  HiveQL query
+      ▼
+Hive Metastore (port 9083)  ←── metadata tabel, schema, partisi
+      │                              │
+      │                              ▼
+      │                     PostgreSQL (port 5432)
+      │
+      ▼  baca/tulis data
+HDFS (namenode:9000)
+      │
+      └── /user/hive/warehouse/   ← default lokasi data tabel Hive
+```
+
+### Akses via Beeline (CLI)
+
+Masuk ke HiveServer2 dari dalam container:
+
+```bash
+docker compose exec hive-server2 beeline -u 'jdbc:hive2://localhost:10000'
+```
+
+Contoh query dasar:
+
+```sql
+-- Lihat semua database
+SHOW DATABASES;
+
+-- Buat database baru
+CREATE DATABASE IF NOT EXISTS bigdata;
+USE bigdata;
+
+-- Buat tabel dari file CSV yang sudah ada di HDFS
+CREATE TABLE IF NOT EXISTS sensor_data (
+    id     INT,
+    ts     STRING,
+    value  DOUBLE
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION 'hdfs://namenode:9000/user/data/sensor/';
+
+-- Query data
+SELECT COUNT(*) FROM sensor_data;
+```
+
+### Akses dari Spark (di Notebook Jupyter)
+
+Tambahkan konfigurasi Hive Metastore saat membuat SparkSession:
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder     .appName("HiveIntegration")     .master("spark://spark-master:7077")     .config("spark.jars.packages",
+            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1")     .config("spark.sql.catalogImplementation", "hive")     .config("spark.hive.metastore.uris", "thrift://hive-metastore:9083")     .enableHiveSupport()     .getOrCreate()
+
+# Sekarang bisa query tabel Hive langsung dari Spark
+spark.sql("SHOW DATABASES").show()
+spark.sql("SELECT * FROM bigdata.sensor_data LIMIT 10").show()
+
+# Atau buat tabel Hive dari DataFrame Spark
+df = spark.read.csv("hdfs://namenode:9000/user/data/myfile.csv", header=True)
+df.write.mode("overwrite").saveAsTable("bigdata.my_table")
+```
+
+### Upload Data ke HDFS lalu Baca via Hive
+
+```bash
+# 1. Salin file ke staging area
+cp data.csv ./hadoop/
+
+# 2. Upload ke HDFS
+docker compose exec namenode hdfs dfs -mkdir -p /user/data/sensor
+docker compose exec namenode hdfs dfs -put /home/hadoop/data.csv /user/data/sensor/
+
+# 3. Registrasikan ke Hive (bisa via Beeline atau Spark)
+```
+
+### Troubleshooting Hive
+
+**Metastore gagal start — koneksi ke PostgreSQL ditolak**
+
+Pastikan `hive-postgres` sudah healthy sebelum `hive-metastore` start:
+
+```bash
+docker compose logs hive-postgres | tail -5
+docker compose ps hive-postgres   # harus "healthy"
+```
+
+**`schematool` error saat `hive-init.sh`**
+
+Jika schema sudah ada tapi corrupt, reset PostgreSQL:
+
+```bash
+docker compose stop hive-metastore hive-server2
+docker compose rm -f hive-postgres
+docker volume rm $(basename $(pwd))_hive_postgres_data
+docker compose up -d hive-postgres
+# Tunggu healthy, lalu jalankan ulang hive-init.sh
+./hive-init.sh
+```
+
+**HiveServer2 tidak bisa akses HDFS**
+
+Pastikan `core-site.xml` dan `hdfs-site.xml` di `./hadoop-config/` sudah ada dan `fs.defaultFS` menunjuk ke `hdfs://namenode:9000`.

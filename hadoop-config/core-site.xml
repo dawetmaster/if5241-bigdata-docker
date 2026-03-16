@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  core-site.xml
+  Memberitahu semua komponen Hadoop di mana NameNode berada.
+  fs.defaultFS WAJIB menggunakan hostname container (namenode), bukan localhost.
+-->
+<configuration>
+  <property>
+    <name>fs.defaultFS</name>
+    <value>hdfs://namenode:9000</value>
+    <description>Alamat NameNode. Harus pakai hostname container, bukan localhost.</description>
+  </property>
+  <property>
+    <name>hadoop.tmp.dir</name>
+    <value>/tmp/hadoop-data</value>
+  </property>
+</configuration>
