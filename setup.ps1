@@ -1,5 +1,5 @@
 # =============================================================================
-# setup.ps1 — Inisialisasi direktori untuk stack Big Data
+# setup.ps1 -- Inisialisasi direktori untuk stack Big Data
 # Kompatibel: Windows 10/11 dengan PowerShell 5.1+ atau PowerShell 7+
 #
 # Cara pakai (jalankan di PowerShell sebagai user biasa, bukan Administrator):
@@ -60,7 +60,7 @@ foreach ($d in $dirs) {
         Write-Skip "'$($d.Path)' sudah ada, dilewati"
     } else {
         New-Item -ItemType Directory -Path $d.Path | Out-Null
-        Write-Ok "Dibuat: .\$($d.Path)  — $($d.Desc)"
+        Write-Ok "Dibuat: .\$($d.Path)  -- $($d.Desc)"
     }
 }
 
@@ -141,9 +141,9 @@ Write-Step "Memeriksa konfigurasi Windows..."
 
 $wslCheck = wsl --status 2>&1
 if ($LASTEXITCODE -eq 0) {
-    Write-Ok "WSL2 tersedia — Docker Desktop dapat menggunakan WSL2 backend (disarankan)"
+    Write-Ok "WSL2 tersedia -- Docker Desktop dapat menggunakan WSL2 backend (disarankan)"
 } else {
-    Write-Skip "WSL2 tidak terdeteksi — Docker akan menggunakan Hyper-V backend"
+    Write-Skip "WSL2 tidak terdeteksi -- Docker akan menggunakan Hyper-V backend"
     Write-Host "         Untuk performa lebih baik, aktifkan WSL2:" -ForegroundColor Gray
     Write-Host "         https://docs.microsoft.com/en-us/windows/wsl/install" -ForegroundColor Gray
 }
