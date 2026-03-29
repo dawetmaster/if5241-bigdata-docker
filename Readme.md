@@ -1,5 +1,11 @@
 # Stack Big Data (IF4044/IF5241) Edisi 2026 dengan Docker
 
+## Shoutout
+
+Apresiasi ke @julianchandras untuk pengajuan fix-nya <3
+
+## Permulaan
+
 > AI Disclosure: Ini dibuat bersama dengan Claude Sonnet 4.6
 
 Stack lengkap untuk praktikum Big Data berbasis Docker Compose, mencakup HDFS, Kafka, Spark, Jupyter, Hive, dan Neo4j — siap pakai di amd64 maupun arm64 (Apple Silicon, Snapdragon).
