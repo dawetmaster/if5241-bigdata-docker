@@ -7,18 +7,6 @@ services:
     image: openeuler/hadoop:latest
     container_name: namenode
     hostname: namenode
-    command:
-      - bash
-      - -c
-      - |
-        # Salin config kita ke HADOOP_CONF_DIR default agar hadoop-env.sh original
-        # (yang berisi JAVA_HOME) tetap terbaca — tidak di-replace seluruhnya
-        cp /etc/hadoop-custom/*.xml $HADOOP_CONF_DIR/
-        # Format hanya jika belum pernah di-format
-        if [ ! -d /tmp/hadoop-data/namenode/current ]; then
-          hdfs namenode -format -nonInteractive -force
-        fi
-        hdfs namenode
     ports:
       - "9870:9870"  # Web UI
       - "9000:9000"  # HDFS IPC — untuk client (hdfs dfs, Spark, dsb)
@@ -26,23 +14,19 @@ services:
       CLUSTER_NAME: local-cluster
     volumes:
       - hadoop_namenode:/tmp/hadoop-data/namenode
-      - ./hadoop-config:/etc/hadoop-custom:ro  # core-site.xml & hdfs-site.xml di-copy ke HADOOP_CONF_DIR
+      - ./hadoop-config/core-site.xml:/usr/local/hadoop/etc/hadoop/core-site.xml:ro
+      - ./hadoop-config/hdfs-site.xml:/usr/local/hadoop/etc/hadoop/hdfs-site.xml:ro
       - ./hadoop:/home/hadoop                  # staging area: host → HDFS
 
   datanode:
     image: openeuler/hadoop:latest
     container_name: datanode
     hostname: datanode
-    command:
-      - bash
-      - -c
-      - |
-        cp /etc/hadoop-custom/*.xml $HADOOP_CONF_DIR/
-        hdfs datanode
     depends_on: [namenode]
     volumes:
       - hadoop_datanode:/tmp/hadoop-data/datanode
-      - ./hadoop-config:/etc/hadoop-custom:ro
+      - ./hadoop-config/core-site.xml:/usr/local/hadoop/etc/hadoop/core-site.xml:ro
+      - ./hadoop-config/hdfs-site.xml:/usr/local/hadoop/etc/hadoop/hdfs-site.xml:ro
       - ./hadoop:/home/hadoop
 
   # === KAFKA (KRaft, no ZooKeeper) ===
