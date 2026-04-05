@@ -1,11 +1,39 @@
 services:
-  hive:
+  hive-postgres:
+    image: postgres:18-alpine
     environment:
-      - SERVICE_NAME=hiveserver2
-    container_name: hive4
-    hostname: hive4
+      POSTGRES_PASSWORD: "example"
+  hive-metastore:
     image: apache/hive:4.2.0
+    depends_on:
+      - hive-postgres
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres:5432/postgres
+        -Djavax.jdo.option.ConnectionUserName=postgres
+        -Djavax.jdo.option.ConnectionPassword=example
+    ports:
+      - 9083:9083
+    volumes:
+      - ./hive-lib/postgres.jar:/opt/hive/lib/postgres.jar
+  hive-server2:
+    image: apache/hive:4.2.0
+    depends_on:
+      - hive-metastore
+    environment:
+      SERVICE_NAME: hiveserver2
+      IS_RESUME: true
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres:5432/postgres
+        -Djavax.jdo.option.ConnectionUserName=postgres
+        -Djavax.jdo.option.ConnectionPassword=example
+        -Dhive.metastore.uris=thrift://hive-metastore:9083
     ports:
       - 10000:10000
       - 10002:10002
-  
+    volumes:
+      - ./hive-lib/postgres.jar:/opt/hive/lib/postgres.jar
