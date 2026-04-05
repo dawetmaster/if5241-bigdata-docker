@@ -57,11 +57,8 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
     depends_on: [kafka]
-
-  # === SPARK ===
   spark-master:
-    image: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
-    container_name: spark-master
+    image: apache/spark:3.5.8-scala2.12-java17-python3-r-ubuntu
     user: root
     command: ["/opt/spark/sbin/start-master.sh"]
     environment:
@@ -71,30 +68,19 @@ services:
       - "7077:7077"
 
   spark-worker:
-    image: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
-    container_name: spark-worker
+    image: apache/spark:3.5.8-scala2.12-java17-python3-r-ubuntu
     user: root
     command: ["/opt/spark/sbin/start-worker.sh", "spark://spark-master:7077"]
     environment:
       SPARK_NO_DAEMONIZE: "true"
     depends_on: [spark-master]
-
-  # === JUPYTER ===
-  # Build dari Dockerfile.jupyter — dependencies di-install saat build, bukan saat start.
-  # Base image di Dockerfile.jupyter WAJIB identik dengan spark-master/spark-worker
-  # agar serialVersionUID Spark tidak clash (InvalidClassException).
-  #
-  # Cara rebuild setelah update requirements.jupyter.txt:
-  #   docker compose build jupyter
-  #   docker compose up -d jupyter
   jupyter:
     build:
       context: .
       dockerfile: Dockerfile.jupyter
       args:
-        SPARK_IMAGE: apache/spark:3.5.1-scala2.12-java17-python3-r-ubuntu
-    image: local/jupyter-spark:3.5.1   # tag lokal agar tidak confuse dengan image upstream
-    container_name: jupyter
+        SPARK_IMAGE: apache/spark:3.5.8-scala2.12-java17-python3-r-ubuntu
+    image: local/jupyter-spark:3.5.8   # tag lokal agar tidak confuse dengan image upstream
     user: root
     ports:
       - "8888:8888"
@@ -103,21 +89,12 @@ services:
     volumes:
       - ./notebooks:/home/notebooks
     depends_on: [spark-master]
-
-
-
-  # === HIVE ===
-  # Terdiri dari tiga service:
-  #   1. hive-postgres   — PostgreSQL sebagai metastore database (persist metadata tabel/schema)
-  #   2. hive-metastore  — Thrift server yang menyimpan dan melayani metadata
-  #   3. hive-server2    — JDBC endpoint untuk query HiveQL (Beeline, Spark, BI tools)
-  #
-  # Versi: apache/hive:4.0.1 — kompatibel dengan Hadoop 3.4.1 + Java 17
-
   hive-postgres:
     image: postgres:18-alpine
     environment:
       POSTGRES_PASSWORD: "example"
+    volumes:
+      - pgsql_data:/var/lib/postgresql
   hive-metastore:
     image: apache/hive:4.2.0
     depends_on:
@@ -152,11 +129,8 @@ services:
       - 10002:10002
     volumes:
       - ./hive-lib/postgres.jar:/opt/hive/lib/postgres.jar
-
-  # === NEO4J ===
   neo4j:
     image: neo4j:5
-    container_name: neo4j
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -166,6 +140,7 @@ services:
       - neo4j_data:/data
 
 volumes:
-  hadoop_namenode:   # metadata namenode (fsimage, edits) — JANGAN dihapus sembarangan
-  hadoop_datanode:   # blok data datanode
+  hadoop_namenode:
+  hadoop_datanode:
+  pgsql_data:
   neo4j_data:
